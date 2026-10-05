@@ -1,10 +1,10 @@
-# ipcr-forge-bridge: the Gitea → Radicle mirror and IPCR Forge's page. Our Go binary, plus git and
+# ipcr-forge: the Gitea → Radicle mirror and IPCR Forge's page. Our Go binary, plus git and
 # the stock Radicle CLI (`rad`, `git-remote-rad`) at the version the forge's node runs.
-# Build context: this folder (bridge/).
+# Build context: this folder (forge/).
 FROM golang:1.24-alpine AS build
 WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ipcr-forge-bridge .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ipcr-forge .
 
 # Radicle's official static (musl) release, checked against its published digest.
 FROM alpine:3.22 AS radicle
@@ -21,17 +21,17 @@ RUN apk add --no-cache xz \
 
 FROM alpine:3.22
 ARG VERSION=dev
-LABEL org.opencontainers.image.title="ipcr-forge-bridge" \
+LABEL org.opencontainers.image.title="ipcr-forge" \
       org.opencontainers.image.description="IPCR Forge: mirrors public Gitea repositories to Radicle, serves the forge's page" \
-      org.opencontainers.image.source="https://github.com/Yundera/ipcr" \
+      org.opencontainers.image.source="https://github.com/Yundera/ipcr-forge" \
       org.opencontainers.image.version="$VERSION"
 RUN apk add --no-cache ca-certificates git \
  # Mirrors and the node's storage belong to the service's uid, but a bind mount can make git see
  # another owner ("dubious ownership"); the storage is the node's own, so trust it.
  && git config --system safe.directory '*'
 COPY --from=radicle /out/ /usr/local/bin/
-COPY --from=build /out/ipcr-forge-bridge /usr/local/bin/ipcr-forge-bridge
+COPY --from=build /out/ipcr-forge /usr/local/bin/ipcr-forge
 ENV RAD_HOME=/radicle-home \
     HOME=/tmp
-# No entrypoint: the install step runs `sh -c '… ipcr-forge-bridge setup'` in this image.
-CMD ["ipcr-forge-bridge", "serve"]
+# No entrypoint: the install step runs `sh -c '… ipcr-forge setup'` in this image.
+CMD ["ipcr-forge", "serve"]

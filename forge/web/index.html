@@ -6,10 +6,10 @@
 <title>IPCR Forge</title>
 <link rel="icon" href="icon.png">
 <!--
-  Served by the forge's bridge (ipcr-forge-bridge, embedded in its binary). Every address is
+  Served by the forge service (ipcr-forge, embedded in its binary). Every address is
   derived in the browser from this page's own hostname (ipcr-forge-<domain> → gitea-<domain>,
   radicle-<domain>, radicle-api-<domain>), so the nip.io / sslip.io aliases work too.
-  Live data: /images.json (IPCR's published.json), /repos.json (the bridge's Gitea → Radicle
+  Live data: /images.json (IPCR's published.json), /repos.json (the forge service's Gitea → Radicle
   mirror state) and the Radicle API's node info.
 -->
 <style>
@@ -363,7 +363,7 @@ for IPFS peers. Details: <a href="https://github.com/Yundera/ipcr" target="_blan
       imagesBody.appendChild(el("p", "Nothing published yet. Tag v1.0.0 on the example repository (above), or push a v* tag from a repository with a workflow; its image appears here a few minutes later.", "muted"));
     });
 
-  // Radicle mirrors: the bridge's state.
+  // Radicle mirrors: the forge service's state.
   var reposBody = document.getElementById("repos-body");
   fetch("repos.json", { cache: "no-store" })
     .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
@@ -374,7 +374,7 @@ for IPFS peers. Details: <a href="https://github.com/Yundera/ipcr" target="_blan
       repos.forEach(function (r) {
         var tr = el("tr");
         var td1 = el("td");
-        // Not r.html_url: the bridge talks to Gitea's internal address, which is what Gitea puts there.
+        // Not r.html_url: the forge service talks to Gitea's internal address, which is what Gitea puts there.
         td1.appendChild(base ? link(url("gitea") + "/" + r.full_name, r.full_name) : el("span", r.full_name));
         var td2 = el("td");
         if (r.rid) {

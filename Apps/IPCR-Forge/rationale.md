@@ -1,7 +1,7 @@
 # IPCR Forge — Rationale
 
 IPCR Forge bundles three store apps (Gitea, Radicle, IPCR), a CI runner with its own Docker daemon,
-and the bridge (`ipcr-forge-bridge`), which mirrors public Gitea repositories to Radicle and
+and the forge service (`ipcr-forge`), which mirrors public Gitea repositories to Radicle and
 serves the forge's page. The Gitea, Radicle and IPCR services are copied from their listings,
 so each keeps the deviations its standalone listing already argues. This document lists them,
 then covers only what the bundle adds.
@@ -23,11 +23,11 @@ with. See docs/forge.md.
 **Added by the bundle:**
 
 1. **`forge-docker` runs `privileged`** (Docker-in-Docker), as Gitea's runner did.
-2. **The bridge (`ipcr-forge`) mounts the Radicle node's home read-write**, including the node's
+2. **The forge service (`ipcr-forge`) mounts the Radicle node's home read-write**, including the node's
    key. It publishes repositories signed by that key.
 3. **A system webhook and its allow-list.** Gitea may deliver webhooks to `ipcr-forge` on the
    server's network (`GITEA__webhook__ALLOWED_HOST_LIST: external,ipcr-forge`).
-4. **An install step that uses the admin password** to mint the bridge's token and to register
+4. **An install step that uses the admin password** to mint the forge service's token and to register
    that webhook.
 5. **A cross-app network link.** `ipcr-gateway` joins `ci-internal`, where the staging registry
    is.
@@ -37,15 +37,15 @@ with. See docs/forge.md.
    domains and host ports.
 9. **Admin pages with their own login** (`/admin`): Gitea OAuth2, Gitea site admins only. The
    install step registers the OAuth2 app.
-10. **The bridge mounts Kubo's keystore read-only**, so it can export the publisher key, encrypted.
+10. **The forge service mounts Kubo's keystore read-only**, so it can export the publisher key, encrypted.
 11. **An admin API in `ipcr-gateway`** (`:4769`) on a new internal network, `ipcr-admin`. Its Bearer
     token is in `ipcr/state/admin-token`, mode 0644.
 12. **A staging gate** (`forge-gate`), running in the CI daemon's network namespace. The registry
     behind it has no network and listens on a unix socket.
-13. **A second Gitea token for the bridge,** with `write:repository` and `read:user`. It sets each
+13. **A second Gitea token for the forge service,** with `write:repository` and `read:user`. It sets each
     publishing repository's `IPCR_PUSH_TOKEN` Actions secret and checks name collisions.
 14. **A credential IPCR generates for itself** (`ipcr/state/staging-auth`, mode 0644), read by the
-    bridge.
+    forge service.
 15. **The root organisation** (`IPCR_ROOT_ORG`): setup creates it if missing, and its repositories
     are also published at the root of the forge's name.
 16. **A public, unauthenticated, read-only registry route** (`ipcr-<domain>` → `ipcr-public`), so this
@@ -65,11 +65,11 @@ container that reaches the daemon over a unix socket.
 
 **2. The node's home.** Publishing to Radicle means three things: creating a repository in the
 node's storage, signing its refs with the node's key, and announcing them through the node's
-control socket. Those live in that folder. This is the mount `radicle-api` already has. The bridge
+control socket. Those live in that folder. This is the mount `radicle-api` already has. The forge service
 uses the stock `rad` CLI (1.10.1, the node's version) rather than reimplementing any of it.
 
 **3. The webhook.** Pushes reach Radicle within seconds instead of at the next 10-minute
-reconcile. Gitea's default allow-list (`external`) refuses private addresses, and the bridge sits
+reconcile. Gitea's default allow-list (`external`) refuses private addresses, and the forge service sits
 on one. The list adds exactly one host name. `private` would let any user's webhook reach every
 container on the shared network.
 
@@ -105,7 +105,7 @@ on the PCS gate, which is not on every host.
 
 **10. The keystore mount.** Kubo exports keys from its CLI only (`key/export` is not available
 over its HTTP API). ipcrd runs as root without capabilities, so it cannot read a `$PUID` 0700
-folder; giving it `DAC_READ_SEARCH` was rejected once already. The bridge runs as `$PUID` and can.
+folder; giving it `DAC_READ_SEARCH` was rejected once already. The forge service runs as `$PUID` and can.
 
 **11. The admin API and its token.** Unpublishing, moving tags, key restore and the allowlist
 change ipcrd's own state (the published tree, `published.json`), so they live in ipcrd. The token is
@@ -127,7 +127,7 @@ repository it belongs to. Setting a secret takes `write:repository`. The token i
 `public-only`, so collision checks also see private users and organisations.
 
 **14. IPCR's own credential.** Same handoff as the admin token: ipcrd (root without capabilities)
-cannot write into another uid's folder, so it writes into its own state folder, which the bridge
+cannot write into another uid's folder, so it writes into its own state folder, which the forge service
 already mounts read-only.
 
 **15. The root organisation.** Short names (`metadec.eth/ipcr-hello`) need one owner whose
@@ -141,17 +141,17 @@ purpose: the images are public on IPFS anyway.
 
 ## Security mitigations in place
 
-**The bridge**
+**The forge service**
 - **It sees public repositories only.** Its Gitea token is scoped `public-only` and
   `read:repository`. Gitea hides every private or limited repository from it, and it can write
   nothing in Gitea. The code checks visibility a second time. Forks and pull mirrors are skipped.
 - **Webhooks are authenticated and carry no content.** Each delivery must pass the HMAC-SHA256
-  check against a random secret written at install (`bridge/secrets`, 0700). A delivery only says
-  *which* repository changed. The bridge re-reads that repository from Gitea, so a forged payload
+  check against a random secret written at install (`forge/secrets`, 0700). A delivery only says
+  *which* repository changed. The forge service re-reads that repository from Gitea, so a forged payload
   can at most cause a pointless sync. Port 8081 has no Caddy route.
 - **It runs unprivileged:** `$PUID`, every capability dropped, a read-only root filesystem,
   `no-new-privileges`, 256 MB. One worker does one sync at a time.
-- **The node's key stays in the bridge and the node.** No CI job mounts the Radicle home.
+- **The node's key stays in the forge service and the node.** No CI job mounts the Radicle home.
 
 **The CI daemon**
 - **No network listener.** `dockerd` gets an explicit `--host=unix:///run/dind/docker.sock` and an
@@ -202,8 +202,8 @@ purpose: the images are public on IPFS anyway.
 - **Can be switched off** in the admin pages (`config.json` `"public": false`).
 
 **The page**
-- **The public page cannot change anything.** The bridge serves it read-only: the embedded page,
-  IPCR's `published.json` (mounted read-only) and the bridge's repository list.
+- **The public page cannot change anything.** The forge service serves it read-only: the embedded page,
+  IPCR's `published.json` (mounted read-only) and the forge service's repository list.
 
 **The admin pages**
 - **Only Gitea site admins get in.** The check is `is_admin`, read from Gitea's own API through the
@@ -215,12 +215,12 @@ purpose: the images are public on IPFS anyway.
   custom `X-IPCR-Admin` header is required. A cross-site form cannot send that header, and a
   cross-site script cannot without a CORS preflight, which is never answered.
 - **The admin API is only on `ipcr-admin`.** That network is `internal: true` and shared only by
-  the bridge and `ipcr-gateway`; every call needs the Bearer token, compared in constant time. Kubo's
+  the forge service and `ipcr-gateway`; every call needs the Bearer token, compared in constant time. Kubo's
   own API stays on `ipcr-internal`.
-- **The cleartext key never crosses the network.** The bridge encrypts it in memory (AES-256-GCM,
+- **The cleartext key never crosses the network.** The forge service encrypts it in memory (AES-256-GCM,
   PBKDF2 at 600k iterations, at least 12 characters of passphrase) and ipcrd decrypts it. A
   restore never deletes a key: the previous one is kept, renamed.
-- **The allowlist is closed by default.** Until the bridge sends its list, nothing is published
+- **The allowlist is closed by default.** Until the forge service sends its list, nothing is published
   (`IMPORT_ALLOW_REQUIRED`). Private repositories are never on it.
 
 ## Alternatives considered and rejected
@@ -234,7 +234,7 @@ purpose: the images are public on IPFS anyway.
 | A per-repository webhook | Every repository would need setup; one system webhook covers all of them, including new ones |
 | Gitea's package registry as the staging registry (v1) | Needs tokens for the workflow and for IPCR, plus the `DAC_READ_SEARCH` capability for IPCR to read its token. It would also be a second place images get published from |
 | Host Docker socket for jobs | Any workflow would get root on the host |
-| A long-lived admin token for the bridge | The webhook is repaired by the install step on every start instead, so the running service never holds admin rights |
+| A long-lived admin token for the forge service | The webhook is repaired by the install step on every start instead, so the running service never holds admin rights |
 
 ## Known limitations
 
@@ -252,7 +252,7 @@ purpose: the images are public on IPFS anyway.
   repository changes hands.
 - **Existing workflows must add a login step,** or their pushes fail with 401.
 - **Private repositories cannot publish:** they get no push credential.
-- **The bridge can read the publisher key.** A compromise of the public-facing bridge leaks it. That
+- **The forge service can read the publisher key.** A compromise of the public-facing forge service leaks it. That
   is the trust it already has with the Radicle node key.
 - **The admin token is world-readable** inside the app's state folder on the host.
 - **Old keys accumulate.** `<key>-replaced-*` keys are kept and republished by Kubo until removed by
@@ -268,7 +268,7 @@ Everything lives under `/DATA/AppData/ipcr-forge/`, one folder per part:
 | --- | --- |
 | `gitea/` | repositories, the database (SQLite), configuration, the runner's registration and config |
 | `radicle/` | node identity (key pair), seeded repositories, Caddy config |
-| `bridge/` | `state/`: the Gitea → Radicle mapping, one bare mirror per repository (disposable), the admin session key and the repository toggles (`admin.json`); `gate/credentials.json` (token hashes); `secrets/` (0700): its two Gitea tokens, the webhook secret, the OAuth2 client credentials |
+| `forge/` | `state/`: the Gitea → Radicle mapping, one bare mirror per repository (disposable), the admin session key and the repository toggles (`admin.json`); `gate/credentials.json` (token hashes); `secrets/` (0700): its two Gitea tokens, the webhook secret, the OAuth2 client credentials |
 | `ci/` | the daemon's socket, its image store (`docker/`), the staging registry (`registry/`, disposable) and its socket (`registry-socket/`) |
 | `ipcr/` | Kubo repo (node identity, IPNS keys, pinned images), TLS CA, watcher state, `config.json` (name, allowlist), the admin token |
 

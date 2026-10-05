@@ -10,15 +10,15 @@ name: ipcr-forge
 #     → ipcr-kubo / ipcr-registry
 #   docker pull ipcr.localhost:4767/ipns/<forge name>/<owner>/<repo>:1.2.3   (anyone)
 #
-#   gitea ──system webhook──▶ ipcr-forge (bridge) ──rad init / git push rad──▶ radicle-node
+#   gitea ──system webhook──▶ ipcr-forge ──rad init / git push rad──▶ radicle-node
 #     every PUBLIC repository, one way: Radicle is a distribution mirror signed by this node.
 #
-# The tile opens Gitea. ipcr-forge-<domain> is the forge's own page, served by the bridge: how to
+# The tile opens Gitea. ipcr-forge-<domain> is the forge's own page, served by the forge service: how to
 # publish, the published images with the `image:` line to use, and the Radicle mirrors.
 #
 # Gitea, Radicle and IPCR services are copied from their standalone listings (Apps/Gitea,
 # Apps/Radicle, Apps/IPCR), so each keeps its own comments and rationale.md; the differences are
-# marked "Forge:". Data folders move, one subfolder per part: $AppID/{gitea,radicle,bridge,ci,ipcr}/.
+# marked "Forge:". Data folders move, one subfolder per part: $AppID/{gitea,radicle,forge,ci,ipcr}/.
 #
 # Replaces the Gitea, Radicle and IPCR apps; it cannot sit beside them. It uses the same container
 # names, domains (gitea-, radicle-, radicle-api-) and host ports (8776, 4768, 127.0.0.1:4767).
@@ -30,19 +30,19 @@ name: ipcr-forge
 
 services:
   # ═══ Bridge — the forge's page, and Gitea → Radicle ════════════════════════════
-  # ipcr-forge-bridge (bridge/ in the IPCR repository). Receives Gitea's system webhook on :8081
+  # ipcr-forge (forge/ in the ipcr-forge repository). Receives Gitea's system webhook on :8081
   # (internal: no Caddy route) and mirrors every public repository to the Radicle node below,
   # with the stock `rad` CLI against the node's own home. Serves the forge's page on :8080.
   # Its install step (forge-setup, below) mints its Gitea token and registers the webhook.
   ipcr-forge:
-    image: ghcr.io/yundera/ipcr-forge-bridge:0.4.0
+    image: ghcr.io/yundera/ipcr-forge:0.4.0
     container_name: ipcr-forge
     user: $PUID:$PGID
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
-    command: ["ipcr-forge-bridge", "serve"]
+    command: ["ipcr-forge", "serve"]
     cpu_shares: 30
     deploy:
       resources:
@@ -53,7 +53,7 @@ services:
       GITEA_URL: http://gitea:3000
       GITEA_OWNER: gitea_admin
       SECRETS_DIR: /secrets
-      STATE_DIR: /bridge
+      STATE_DIR: /forge
       RAD_HOME: /radicle-home
       IPCR_PUBLISHED: /srv/ipcr-state/published.json
       RECONCILE: 10m
@@ -77,9 +77,9 @@ services:
       # radicle-api has.
       - ${DATA_ROOT:-/DATA}/AppData/$AppID/radicle/home/:/radicle-home/
       # repos.json (Gitea repository → Radicle ID) and one bare mirror per repository.
-      - ${DATA_ROOT:-/DATA}/AppData/$AppID/bridge/state:/bridge
+      - ${DATA_ROOT:-/DATA}/AppData/$AppID/forge/state:/forge
       # The Gitea token and the webhook secret the install step writes. Read-only here.
-      - ${DATA_ROOT:-/DATA}/AppData/$AppID/bridge/secrets:/secrets:ro
+      - ${DATA_ROOT:-/DATA}/AppData/$AppID/forge/secrets:/secrets:ro
       # published.json → /images.json, and the admin API's token. Read-only.
       - ${DATA_ROOT:-/DATA}/AppData/$AppID/ipcr/state:/srv/ipcr-state:ro
       # Kubo's keystore, read-only: the publisher key, for encrypted backups (Kubo exports keys
@@ -89,7 +89,7 @@ services:
       - gitea
       - radicle-node
     healthcheck:
-      test: ["CMD", "ipcr-forge-bridge", "health"]
+      test: ["CMD", "ipcr-forge", "health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -160,7 +160,7 @@ services:
       # Forge: off. Images go to the staging registry that IPCR follows; a second registry would
       # be a second place an image could be published from.
       GITEA__packages__ENABLED: "false"
-      # Forge: webhooks may reach the bridge (ipcr-forge, on this server's network) and, as by
+      # Forge: webhooks may reach the forge service (ipcr-forge, on this server's network) and, as by
       # default, any public address. Not `private`: that would let any user's webhook reach every
       # container on the shared network.
       GITEA__webhook__ALLOWED_HOST_LIST: external,ipcr-forge
@@ -277,11 +277,11 @@ services:
   # The staging registry's front door: `localhost:5000` to the daemon and to every job (act runs
   # jobs on the host network, which is this namespace), forge-docker:5000 to ipcr-gateway. Plain
   # HTTP, which Docker allows to localhost only. It checks a login on every request: a job logs in
-  # as its repository (<owner>/<repo>, the IPCR_PUSH_TOKEN secret the bridge sets on it) and may
+  # as its repository (<owner>/<repo>, the IPCR_PUSH_TOKEN secret the forge service sets on it) and may
   # push that name only; IPCR logs in as the importer (state/staging-auth, which it generates).
-  # Same image as the bridge (`ipcr-forge-bridge gate`, bridge/gate.go). See rationale.md.
+  # Same image as the forge service (`ipcr-forge gate`, forge/gate.go). See rationale.md.
   forge-gate:
-    image: ghcr.io/yundera/ipcr-forge-bridge:0.4.0
+    image: ghcr.io/yundera/ipcr-forge:0.4.0
     container_name: forge-gate
     user: $PUID:$PGID
     read_only: true
@@ -289,7 +289,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
     network_mode: service:forge-docker
-    command: ["ipcr-forge-bridge", "gate"]
+    command: ["ipcr-forge", "gate"]
     cpu_shares: 20
     deploy:
       resources:
@@ -301,8 +301,8 @@ services:
       GATE_UPSTREAM: unix:///run/staging/registry.sock
       GATE_CREDENTIALS: /gate/credentials.json
     volumes:
-      # Hashes only, written by the bridge.
-      - ${DATA_ROOT:-/DATA}/AppData/$AppID/bridge/state/gate:/gate:ro
+      # Hashes only, written by the forge service.
+      - ${DATA_ROOT:-/DATA}/AppData/$AppID/forge/state/gate:/gate:ro
       - ${DATA_ROOT:-/DATA}/AppData/$AppID/ci/registry-socket:/run/staging
     depends_on:
       - forge-docker
@@ -342,7 +342,7 @@ services:
       - ${DATA_ROOT:-/DATA}/AppData/$AppID/ci/registry-socket:/run/staging
 
   # ═══ Radicle — the public mirror ═══════════════════════════════════════════════
-  # Verbatim from Apps/Radicle; only its data folder moves to $AppID/radicle/. The bridge
+  # Verbatim from Apps/Radicle; only its data folder moves to $AppID/radicle/. The forge service
   # creates and pushes repositories in this node's storage; the node replicates them.
 
   # The web UI: the Radicle Explorer bundle served as static files by Caddy.
@@ -499,7 +499,7 @@ services:
       # Forge: watch the CI's staging registry, over ci-internal. Internal, so no credentials.
       IMPORT_WATCH: ${IPCR_IMPORT_WATCH:-http://forge-docker:5000}
       IMPORT_AUTH: ${IPCR_IMPORT_AUTH:-}
-      # Forge: IPCR's login at the staging registry's gate, generated on first start; the bridge
+      # Forge: IPCR's login at the staging registry's gate, generated on first start; the forge service
       # reads it (read-only ipcr/state) and gives it the importer's rights at the gate.
       IMPORT_AUTH_FILE: /data/state/staging-auth
       IMPORT_AUTH_GENERATE: "true"
@@ -508,8 +508,8 @@ services:
       # /ipns/<forge key>/<repo>:<tag>. One name for the whole forge, which a DNSLink domain or an
       # ENS name can point at: ipcr.localhost:4767/ipns/example.eth/<repo>:<tag>.
       IMPORT_PUBLISHER: ${IPCR_IMPORT_PUBLISHER:-forge}
-      # Forge: publish only the repositories the bridge allows (public Gitea repositories, minus
-      # those switched off in the admin pages). Until the bridge sends its list, nothing is.
+      # Forge: publish only the repositories the forge service allows (public Gitea repositories, minus
+      # those switched off in the admin pages). Until the forge service sends its list, nothing is.
       IMPORT_ALLOW_REQUIRED: "true"
       # Forge: delete each tag from the staging registry once published (its blobs go at the
       # registry's next start, see forge-registry).
@@ -518,7 +518,7 @@ services:
       # its name; resolvers cache them 5 minutes, so a new tag shows up quickly.
       IPNS_LIFETIME: ${IPCR_IPNS_LIFETIME:-168h}
       IPNS_TTL: 5m
-      # Forge: the admin API, for the bridge, on ipcr-admin. Bearer token in state/admin-token.
+      # Forge: the admin API, for the forge service, on ipcr-admin. Bearer token in state/admin-token.
       ADMIN_LISTEN: ":4769"
       IMPORT_INTERVAL: 60s
       STATE_DIR: /data/state
@@ -547,7 +547,7 @@ services:
       - ipcr-internal
       # Forge only: reaches the staging registry for the import poller above.
       - ci-internal
-      # Forge only: the admin API, reached by the bridge.
+      # Forge only: the admin API, reached by the forge service.
       - ipcr-admin
     cpu_shares: 50
     deploy:
@@ -841,15 +841,15 @@ x-compose-app:
   schema_version: 2
   folders:
     # ── Bridge ──
-    - path: /DATA/AppData/$AppID/bridge/state
+    - path: /DATA/AppData/$AppID/forge/state
       user: $PUID
       group: $PGID
-    - path: /DATA/AppData/$AppID/bridge/secrets
+    - path: /DATA/AppData/$AppID/forge/secrets
       user: $PUID
       group: $PGID
       mode: "0700"
-    # The gate's credentials (hashes), written by the bridge, read by the gate.
-    - path: /DATA/AppData/$AppID/bridge/state/gate
+    # The gate's credentials (hashes), written by the forge service, read by the gate.
+    - path: /DATA/AppData/$AppID/forge/state/gate
       user: $PUID
       group: $PGID
     # ── Gitea ──
@@ -897,7 +897,7 @@ x-compose-app:
       user: $PUID
       group: $PGID
       mode: "0700"
-    # Created ahead of Kubo's first start: the bridge mounts it, and Docker would otherwise create
+    # Created ahead of Kubo's first start: the forge service mounts it, and Docker would otherwise create
     # it as root, where Kubo cannot write its keys.
     - path: /DATA/AppData/$AppID/ipcr/kubo/keystore
       user: $PUID
@@ -927,7 +927,7 @@ x-compose-app:
       mode: "0755"
   init:
     # In order: Radicle's identity before its node starts, then Gitea's admin, then the runner
-    # token and the bridge's setup, which both need that admin to exist.
+    # token and the forge service's setup, which both need that admin to exist.
     - name: radicle-identity
       image: dirk1980/radicle-seed-node@sha256:78ccee526ad4b4f4d7c79c2323b032a7209858a48e1dc9c077272ff1660050e2
       user: $PUID:$PGID
@@ -969,21 +969,21 @@ x-compose-app:
           mv /runner/token.new /runner/token
           chmod 600 /runner/token
       when: absent:/DATA/AppData/$AppID/gitea/runner/.runner
-    # The bridge's Gitea tokens (public-only read; and write:repository for push secrets), the
+    # The forge service's Gitea tokens (public-only read; and write:repository for push secrets), the
     # webhook secret, the system webhook, the admin pages' OAuth2 app, the root organisation and
     # the example repository (in that organisation). Idempotent, so on every start: it repairs the webhook.
     # The admin password is used here only, never stored.
     - name: forge-setup
-      image: ghcr.io/yundera/ipcr-forge-bridge:0.4.0
+      image: ghcr.io/yundera/ipcr-forge:0.4.0
       user: $PUID:$PGID
       phase: post_up
       network: $APP_NET
       volumes:
-        - /DATA/AppData/$AppID/bridge/secrets:/secrets
+        - /DATA/AppData/$AppID/forge/secrets:/secrets
       command:
         - sh
         - -c
-        - GITEA_PASSWORD="$APP_DEFAULT_PASSWORD" GITEA_URL=http://gitea:3000 IPCR_ROOT_ORG="$IPCR_ROOT_ORG" PUBLIC_HOSTS="ipcr-forge-$APP_DOMAIN,ipcr-forge-$APP_PUBLIC_IP_DASH.nip.io,ipcr-forge-$APP_PUBLIC_IP_DASH.sslip.io" ipcr-forge-bridge setup
+        - GITEA_PASSWORD="$APP_DEFAULT_PASSWORD" GITEA_URL=http://gitea:3000 IPCR_ROOT_ORG="$IPCR_ROOT_ORG" PUBLIC_HOSTS="ipcr-forge-$APP_DOMAIN,ipcr-forge-$APP_PUBLIC_IP_DASH.nip.io,ipcr-forge-$APP_PUBLIC_IP_DASH.sslip.io" ipcr-forge setup
       when: always
   webui-host: gitea-${domain}
   webui-path: /

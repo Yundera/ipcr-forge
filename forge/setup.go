@@ -20,7 +20,7 @@ import (
 var exampleFiles embed.FS
 
 const (
-	tokenName      = "ipcr-forge-bridge"
+	tokenName      = "ipcr-forge"
 	adminTokenName = "ipcr-forge-secrets"
 )
 

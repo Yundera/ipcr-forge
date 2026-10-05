@@ -1,4 +1,4 @@
-// ipcr-forge-bridge — the glue of IPCR Forge: Gitea is where people work, Radicle is where the code
+// ipcr-forge — the glue of IPCR Forge: Gitea is where people work, Radicle is where the code
 // is replicated, and this service keeps the second following the first. One way only.
 //
 //	serve (default)  webhook receiver + mirror worker + the forge's page
@@ -21,7 +21,7 @@
 //	GITEA_OWNER      the admin account (default gitea_admin)
 //	GITEA_PASSWORD   setup only: its password, used once to mint the token and the hook
 //	SECRETS_DIR      gitea-token and hook-secret (default /secrets)
-//	STATE_DIR        repos.json and the bare mirrors (default /bridge)
+//	STATE_DIR        repos.json and the bare mirrors (default /forge)
 //	RAD_HOME         the node's Radicle home (default /radicle-home)
 //	WEB_LISTEN       the page (default :8080)
 //	HOOK_LISTEN      the webhook, internal only (default :8081)
@@ -42,7 +42,7 @@
 //	IMPORT_PUBLISHER       the publisher key's name (default forge)
 //	IPCR_ROOT_ORG          organisation published at the root of the forge's name, until changed in
 //	                       the admin page (default: none)
-//	GATE_CREDENTIALS       the gate's credentials.json (default /bridge/gate/credentials.json)
+//	GATE_CREDENTIALS       the gate's credentials.json (default /forge/gate/credentials.json)
 //	IPCR_STAGING_AUTH      IPCR's own staging credential (default /srv/ipcr-state/staging-auth)
 package main
 
@@ -104,7 +104,7 @@ func serve() error {
 	if err != nil {
 		return fmt.Errorf("RECONCILE: %w", err)
 	}
-	stateDir := env("STATE_DIR", "/bridge")
+	stateDir := env("STATE_DIR", "/forge")
 	st, err := loadState(stateDir + "/repos.json")
 	if err != nil {
 		return err
@@ -166,11 +166,11 @@ func serve() error {
 				log.Printf("allowlist: %v", err)
 			}
 		}
-		log.Printf("bridge: admin pages on, IPCR admin API %s", ipcr)
+		log.Printf("forge: admin pages on, IPCR admin API %s", ipcr)
 	}
 	go reconcileLoop(m, q, every)
 
-	log.Printf("bridge: %s → Radicle (%s), reconcile every %s", m.gitea.base, m.radHome, every)
+	log.Printf("forge: %s → Radicle (%s), reconcile every %s", m.gitea.base, m.radHome, every)
 	return http.ListenAndServe(env("WEB_LISTEN", ":8080"), mux)
 }
 

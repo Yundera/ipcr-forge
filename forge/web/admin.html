@@ -6,8 +6,8 @@
 <title>IPCR Forge admin</title>
 <link rel="icon" href="icon.png">
 <!--
-  The forge's admin page: Gitea site administrators only (the bridge checks the session for the
-  page and for every API call). Everything goes through /admin/api/: the bridge's own endpoints
+  The forge's admin page: Gitea site administrators only (the forge service checks the session for the
+  page and for every API call). Everything goes through /admin/api/: the forge service's own endpoints
   (repositories, key export) and IPCR's admin API behind /admin/api/ipcr/.
 -->
 <style>
@@ -233,7 +233,7 @@
     var t = $("toast"); t.textContent = msg; t.style.display = "block";
     clearTimeout(toast.t); toast.t = setTimeout(function () { t.style.display = "none"; }, ms || 4000);
   }
-  // Every call: same origin, with the header the bridge requires on writes.
+  // Every call: same origin, with the header the forge service requires on writes.
   function api(method, path, body) {
     var opt = { method: method, headers: { "X-IPCR-Admin": "1" }, credentials: "same-origin", cache: "no-store" };
     if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }

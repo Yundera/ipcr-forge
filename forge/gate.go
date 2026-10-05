@@ -17,12 +17,12 @@ import (
 	"time"
 )
 
-// The gate is the staging registry's front door (`ipcr-forge-bridge gate`). CI jobs push to
+// The gate is the staging registry's front door (`ipcr-forge gate`). CI jobs push to
 // localhost:5000 and IPCR imports from it; before the gate, anyone who could run a job could push
 // any image name, and IPCR published what it found. Now:
 //
 //   - a job logs in as its repository: user <owner>/<repo>, password the IPCR_PUSH_TOKEN secret the
-//     bridge set on that repository (pushcreds.go). It may read and write that repository's
+//     forge service set on that repository (pushcreds.go). It may read and write that repository's
 //     manifests, blobs and tags, and nothing else: no other name, no catalog, no delete, no
 //     cross-repository blob mount;
 //   - IPCR logs in as the importer (the credential it generated itself): read everything, list the
@@ -34,7 +34,7 @@ import (
 // Environment: GATE_LISTEN (default :5000), GATE_UPSTREAM (default
 // unix:///run/staging/registry.sock), GATE_CREDENTIALS (default /gate/credentials.json).
 
-// gateCreds is credentials.json, written by the bridge: SHA-256 (hex) of each password.
+// gateCreds is credentials.json, written by the forge service: SHA-256 (hex) of each password.
 type gateCreds struct {
 	Push     map[string]string `json:"push"`     // "<owner>/<repo>" (lowercase) → hash
 	Importer map[string]string `json:"importer"` // user → hash

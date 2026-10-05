@@ -19,7 +19,7 @@ const (
 	stFrozen  = "frozen"  // no longer public in Gitea (or deleted): no further sync, nothing retracted
 )
 
-// repoState is what the bridge remembers per Gitea repository, keyed by Gitea's numeric ID so a
+// repoState is what the forge service remembers per Gitea repository, keyed by Gitea's numeric ID so a
 // rename or a transfer keeps its Radicle ID.
 type repoState struct {
 	ID            int64     `json:"id"`

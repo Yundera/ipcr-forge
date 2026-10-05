@@ -1,5 +1,11 @@
 # IPCR Forge — design notes
 
+This repository is the forge, an add-on to the IPCR engine
+([Yundera/ipcr](https://github.com/Yundera/ipcr): the registry gateway, the IPFS import, the IPNS
+naming, the admin API). The engine knows nothing about Gitea, Radicle or this forge. The forge uses
+the engine's image (`ghcr.io/yundera/ipcr`) and the contract listed in its
+[design notes](https://github.com/Yundera/ipcr/blob/main/docs/design.md#contract-with-add-ons).
+
 How the forge in [Apps/IPCR-Forge/](../Apps/IPCR-Forge/) goes from `git push` to `docker pull`, why it
 is shaped this way, and what was learned building it. The listing's own security argument is in
 [rationale.md](../Apps/IPCR-Forge/rationale.md).
@@ -24,8 +30,8 @@ A forge people actually want to use, whose releases do not depend on it staying 
 | **v3** (this) | **Gitea** | **Gitea Actions** | — |
 
 v3 keeps what worked in both: v1's Gitea + Actions setup, and v2's staging registry inside the
-CI's own Docker daemon (no tokens, no registry credentials). The bridge is v1's glue reversed and
-rewritten in Go ([bridge/](../bridge/)).
+CI's own Docker daemon (no tokens, no registry credentials). The forge service is v1's glue reversed and
+rewritten in Go ([forge/](../forge/)).
 
 The objection that removed Gitea in v2 was "two places where state can originate". It does not apply
 here: state originates in Gitea only. Radicle receives a copy that nobody edits; patches or issues
@@ -37,7 +43,7 @@ opened on the Radicle side are not read.
 developer: git push origin main v1.2.3   (or: create a tag in Gitea's UI)
    │
    ▼
-gitea ─────────── system webhook (push/create/delete/repository) ──▶ ipcr-forge (bridge)
+gitea ─────────── system webhook (push/create/delete/repository) ──▶ ipcr-forge (forge service)
    │                                                                    · git fetch from Gitea
    │ Actions                                                            · rad init (first time)
    ▼                                                                    · git push rad (signed by the node)
@@ -54,9 +60,9 @@ anyone: docker pull ipcr.localhost:4767/ipns/<forge k51… | example.eth>/<owner
 The two legs do not depend on each other: a repository can be built without being mirrored
 (private repositories), and mirrored without being built (no workflow).
 
-## The bridge
+## The forge service
 
-[bridge/](../bridge/): one Go binary, `ipcr-forge-bridge`, image `ghcr.io/yundera/ipcr-forge-bridge`.
+[forge/](../forge/): one Go binary, `ipcr-forge`, image `ghcr.io/yundera/ipcr-forge`.
 
 - **`setup`**, an install step (`post_up`, on every start, idempotent). It signs in once as
   `gitea_admin` with the default app password and does four things:
@@ -95,9 +101,9 @@ code checks visibility again anyway.
 
 - **Radicle signatures mean "this forge published it"**, not "this developer wrote it". Radicle is a
   distribution channel here, not the trust root. The `/rad/<rid>/…` image-naming idea in
-  [naming.md](naming.md) is weaker for it.
+  [naming.md](https://github.com/Yundera/ipcr/blob/main/docs/naming.md) is weaker for it.
 - **Only allowed names are published.** IPCR publishes an image name only if it is on the allowlist
-  the bridge keeps (`IMPORT_ALLOW_REQUIRED`). That list holds the public Gitea repositories, minus
+  the forge service keeps (`IMPORT_ALLOW_REQUIRED`). That list holds the public Gitea repositories, minus
   those switched off in the admin pages. Images built from private repositories are therefore not
   published.
 - **Each repository publishes its own name only.** The staging registry sits behind a gate (see
@@ -117,17 +123,17 @@ code checks visibility again anyway.
 
 ## Admin
 
-`https://ipcr-forge-<domain>/admin`. It is served by the bridge and only lets in Gitea site
+`https://ipcr-forge-<domain>/admin`. It is served by the forge service and only lets in Gitea site
 administrators.
 
 **Sign-in.** It uses an OAuth2 app that the `setup` step registers, with one redirect URI per
-host. The flow is the authorization code with PKCE and the `read:user` scope. The bridge reads
+host. The flow is the authorization code with PKCE and the `read:user` scope. The forge service reads
 `is_admin` from `/api/v1/user`, drops the Gitea token, and sets its own HMAC-signed session (8 h;
-the key lives in `bridge/state`). Writes require the `X-IPCR-Admin` header and a same-origin
+the key lives in `forge/state`). Writes require the `X-IPCR-Admin` header and a same-origin
 request.
 
-**Behind the page.** The page calls the bridge, and the bridge calls ipcrd's admin API
-(`gateway/admin.go`). That API listens on `:4769`, on the `ipcr-admin` network (internal, bridge
+**Behind the page.** The page calls the forge service, and the forge service calls ipcrd's admin API
+([`gateway/admin.go`](https://github.com/Yundera/ipcr/blob/main/gateway/admin.go) in the IPCR engine). That API listens on `:4769`, on the `ipcr-admin` network (internal, forge service
 and gateway only), and needs a Bearer token from `ipcr/state/admin-token`.
 
 | Section | What it does |
@@ -145,12 +151,12 @@ ipfs key import forge key
 ```
 Then publish with a sequence number above the network's.
 
-**Backup format** (`gateway/keybackup.go`, copied in `bridge/`):
+**Backup format** ([`gateway/keybackup.go`](https://github.com/Yundera/ipcr/blob/main/gateway/keybackup.go) in the engine, copied in `forge/`):
 - JSON containing PBKDF2-SHA256 (600k iterations) and AES-256-GCM;
 - the additional authenticated data binds the key's name and its `k51…`;
 - the plaintext is exactly what `ipfs key export` writes.
 
-The bridge seals (it can read the keystore) and ipcrd opens, so the cleartext key never crosses the
+The forge service seals (it can read the keystore) and ipcrd opens, so the cleartext key never crosses the
 network.
 
 ## Root organisation (short names)
@@ -163,7 +169,7 @@ ipcr.localhost:4767/ipns/metadec.eth/ipcr-hello:1.0.0
 ipcr.localhost:4767/ipns/metadec.eth/metadec/ipcr-hello:1.0.0
 ipcr.localhost:4767/ipns/k51…/ipcr-hello:1.0.0
 ```
-- **How it is passed on:** the bridge sends IPCR `allow.aliases` (`{"metadec/ipcr-hello":
+- **How it is passed on:** the forge service sends IPCR `allow.aliases` (`{"metadec/ipcr-hello":
   ["ipcr-hello"]}`). IPCR publishes each tag under the full path and every alias in one tree
   update.
 - **Alias sync:** on each pass IPCR adds and removes alias folders to match. Switching the
@@ -212,8 +218,8 @@ IPCR ── Basic ipcr:<generated> ── forge-docker:5000 ──────�
                                                                         ▼
                                                                      forge-registry (no network)
 ```
-- **`forge-gate`** is `ipcr-forge-bridge gate`, built from the same image.
-  - It checks Basic auth against `bridge/state/gate/credentials.json` (hashes only), re-read when
+- **`forge-gate`** is `ipcr-forge gate`, built from the same image.
+  - It checks Basic auth against `forge/state/gate/credentials.json` (hashes only), re-read when
     it changes.
   - **A repository** may GET, HEAD, POST, PUT and PATCH under `/v2/<owner>/<repo>/{blobs,manifests,tags}/`.
     Cross-repository blob mounts are stripped, so the client uploads instead.
@@ -223,19 +229,19 @@ IPCR ── Basic ipcr:<generated> ── forge-docker:5000 ──────�
   the daemon, which sees neither that folder nor a port. So the gate cannot be bypassed short of a
   breakout (see Trust).
 - **Credentials:**
-  - **Per repository:** the bridge generates a token for each repository that may publish. It
+  - **Per repository:** the forge service generates a token for each repository that may publish. It
     sets the repository's `IPCR_PUSH_TOKEN` Actions secret through a `write:repository` token
     (`ipcr-forge-secrets`, minted at setup) and writes the token's hash for the gate. A
     repository switched off or frozen loses both. "Reissue" in the admin page rotates the token.
   - **IPCR:** IPCR generates its own credential at its first start (`IMPORT_AUTH_GENERATE`,
-    `state/staging-auth`), and the bridge passes its hash to the gate.
+    `state/staging-auth`), and the forge service passes its hash to the gate.
 - **Migration:** existing workflows must add the login step (the template below). Without it, a
   push fails with `401 Unauthorized` at its first blob check.
 
 ## Workflow contract
 
 A repository opts in by committing a workflow under `.gitea/workflows/`. The template is
-[bridge/example/.gitea/workflows/build.yml](../bridge/example/.gitea/workflows/build.yml):
+[forge/example/.gitea/workflows/build.yml](../forge/example/.gitea/workflows/build.yml):
 
 - `docker/login-action` to `localhost:5000`, `username: ${{ github.repository }}`,
   `password: ${{ secrets.IPCR_PUSH_TOKEN }}`.
@@ -261,35 +267,35 @@ Carried over from v1 and v2; each one silently produced the wrong result rather 
    it first.
 5. **Radicle has no shared `refs/tags/`** unless the identity carries a canonical-refs rule. Without
    one, a tag lives under its pusher's namespace, where `rad clone` and the explorer do not show it.
-   The bridge adds the rule right after `rad init`.
+   The forge service adds the rule right after `rad init`.
 
 New in v3 (tested locally with Gitea 1.27.3 and rad 1.10.1, 2026-10-04):
 
-6. **`rad init` works on a bare repository** (it uses `workdir().unwrap_or(path)`), so the bridge
+6. **`rad init` works on a bare repository** (it uses `workdir().unwrap_or(path)`), so the forge service
    keeps bare mirrors only. It also seeds the repository on the node and adds the `rad` remote.
 7. **A deleted tag stays canonical.** `git push --prune` removes it from the node's namespace, but
    `refs/tags/<tag>` keeps the last target. Tags are meant to be immutable, so this was left alone.
-8. **Gitea's default webhook allow-list (`external`) blocks the bridge.** It is on the server's
+8. **Gitea's default webhook allow-list (`external`) blocks the forge service.** It is on the server's
    private network. `ALLOWED_HOST_LIST: external,ipcr-forge` allows exactly that one container.
    `private` would let any user's webhook reach every container on the shared network.
 9. **`rad sync --announce` takes its RID positionally** (`rad sync <rid> --announce`); there is no
    `--rid` flag.
-10. **`rad sync` blocks for its timeout when the node has no peers.** The bridge pushes with
+10. **`rad sync` blocks for its timeout when the node has no peers.** The forge service pushes with
     `-o no-sync` and announces separately with a 30-second bound, so a push is never held up by the
     network.
 11. **`act_runner` needs about 1 GB.** It holds a job's checkout and actions in memory while it
     copies them into the job container. At 256 MB it was OOM-killed mid-job. The job container
     then ran on, orphaned, and Gitea showed the run as "running" until it timed out.
-12. **The first `rad init` can fail if the node is still starting.** The bridge's retry adopts the
+12. **The first `rad init` can fail if the node is still starting.** The forge service's retry adopts the
     RID that `rad init` already wrote into the mirror's `rad` remote, so no second repository is
-    created (seen on holyhorse). `rad` prints its errors on stdout, which the bridge now logs.
+    created (seen on holyhorse). `rad` prints its errors on stdout, which the forge service now logs.
 13. **Gitea's API returns `html_url` built from the internal address** (`http://gitea:3000/…`) when
     called through it. The page builds Gitea links from its own host name instead.
 14. **Right after `up`, new domains answer with the gateway's SSO redirect** until Caddy picks up the
     labels (about a minute). The runner's registration retries through that window.
 
 15. **`key/export` is CLI-only** in Kubo (`NoRemote`), and ipcrd, which runs as root without
-    capabilities, cannot read the `$PUID` 0700 keystore. The bridge reads `key_<base32 name>`
+    capabilities, cannot read the `$PUID` 0700 keystore. The forge service reads `key_<base32 name>`
     (`forge` → `key_mzxxez3f`, mode 0400) through a read-only mount. Those bytes are what
     `ipfs key export` would write.
 16. **Delegated routing does not use the spec's 404.** For a name it doesn't know, delegated-ipfs.dev
@@ -310,7 +316,7 @@ New in v3 (tested locally with Gitea 1.27.3 and rad 1.10.1, 2026-10-04):
 22. **Radicle IDs are derived from the identity document.** `metadec/ipcr-hello` (the example,
     created again in the organisation) had the same name, description and delegate as
     `gitea_admin/ipcr-hello`, so the same RID. `rad init` failed with "attempt to reinitialize". The
-    bridge now puts the Gitea path in the Radicle description, which makes the document unique per
+    forge service now puts the Gitea path in the Radicle description, which makes the document unique per
     forge.
 23. **Gitea regenerates an OAuth2 app's secret on every update.** `setup` used to update the app at
     every start (to follow the hosts) and kept the old secret, which broke the admin login
@@ -327,7 +333,7 @@ New in v3 (tested locally with Gitea 1.27.3 and rad 1.10.1, 2026-10-04):
 
 ## Verified
 
-**Locally** (Gitea 1.27.3-rootless, `radicle-seed-node` 1.10.1, the bridge image, one Docker network):
+**Locally** (Gitea 1.27.3-rootless, `radicle-seed-node` 1.10.1, the forge service image, one Docker network):
 
 - `setup` run twice leaves exactly one system hook.
 - `ipcr-hello` was created and mirrored with the crefs rule in its identity.
@@ -390,11 +396,12 @@ New in v3 (tested locally with Gitea 1.27.3 and rad 1.10.1, 2026-10-04):
 
 - **Pull from a second IPCR server** (`ipcr.localhost`): verified on holyhorse itself only, though
   the public front door was pulled from another machine; v2's images pulled across IPCR servers.
-- **Publish the images**: `ghcr.io/yundera/ipcr:1.5.0` and `ghcr.io/yundera/ipcr-forge-bridge:0.4.0`
-  (workflows `image.yml` and `bridge.yml`, tags `v1.5.0` and `bridge-v0.4.0`).
+- **Publish the images**: `ghcr.io/yundera/ipcr:1.5.0` and `ghcr.io/yundera/ipcr-forge:0.4.0`
+  (`ghcr.io/yundera/ipcr` from the engine repository, tag `v1.5.0`; `ghcr.io/yundera/ipcr-forge`
+  from this one, tag `v0.4.0`).
 - **CI isolation:** jobs on a privileged daemon can reach the host. Rootless DinD does not start
   on this platform (AppArmor); a VM-based runner would be the real fix.
-- **Private repositories** cannot publish: the bridge only sees public ones. If wanted, give them
+- **Private repositories** cannot publish: the forge service only sees public ones. If wanted, give them
   push credentials too (the images would still be public on IPFS).
 - **Old keys:** `<key>-replaced-*` keys are kept forever, and Kubo keeps republishing them. A
   "delete" in the admin page, once the new key is confirmed.
