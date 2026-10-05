@@ -21,6 +21,8 @@ type mirror struct {
 	state   *state
 	repoDir string // one bare repository per Gitea repository: <id>.git
 	radHome string
+	// RADICLE=off: never mirror, whatever is mounted.
+	radicleOff bool
 	// Called after each reconcile pass (the admin pages keep IPCR's allowlist in step).
 	onReconcile func()
 }
@@ -56,6 +58,15 @@ func (m *mirror) sync(id int64) {
 		}
 		return
 	}
+	if !m.radicleReady() {
+		// No node (the split listing without the Radicle app, or the node not started yet). Nothing
+		// is fetched; the reconcile loop looks again, so installing Radicle later starts the mirror.
+		if cur.State != stWaiting || cur.Error != errNoRadicle {
+			cur.State, cur.Error = stWaiting, errNoRadicle
+			m.save(cur)
+		}
+		return
+	}
 	if err := m.publish(r, &cur); err != nil {
 		cur.State, cur.Error = stError, err.Error()
 		log.Printf("sync %s: %v", r.FullName, err)
@@ -63,6 +74,22 @@ func (m *mirror) sync(id int64) {
 		cur.State, cur.Error, cur.LastSync = stSynced, "", time.Now().UTC()
 	}
 	m.save(cur)
+}
+
+const errNoRadicle = "no Radicle node: mirrored once the Radicle app is installed and running"
+
+// radicleReady reports whether a Radicle node is there to mirror into: its key (rad auth ran) and
+// its control socket (the node runs) in RAD_HOME.
+func (m *mirror) radicleReady() bool {
+	if m.radicleOff {
+		return false
+	}
+	for _, p := range []string{"keys/radicle", "node/control.sock"} {
+		if _, err := os.Stat(filepath.Join(m.radHome, p)); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *mirror) save(r repoState) {

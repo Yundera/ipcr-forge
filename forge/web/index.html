@@ -67,6 +67,8 @@
   .scroll { overflow-x: auto; }
   .state { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
   .state.synced { color: var(--ok); } .state.waiting, .state.frozen { color: var(--warn); } .state.error { color: var(--bad); }
+  [hidden] { display: none !important; }
+  .banner { border: 1px solid var(--bad); border-radius: 8px; padding: 10px 14px; margin: 16px 0; }
   footer { margin-top: 48px; color: var(--muted); font-size: 13px; }
 </style>
 </head>
@@ -83,11 +85,12 @@
 <p class="lede">From <code>git push</code> to <code>docker pull</code> on any server. Work in Gitea as
 usual: its Actions build your images, IPCR serves them from IPFS, and every public repository is
 mirrored to the Radicle peer-to-peer network.</p>
+<div class="banner" id="status-banner" hidden></div>
 
 <div class="cards">
   <a class="card" id="link-gitea" href="#"><b>Gitea</b><span>Your repositories, pull requests, issues and builds. Sign in as <code>gitea_admin</code>.</span></a>
   <a class="card" href="#images"><b>Published images</b><span>What this forge serves from IPFS, with the line to put in a compose file.</span></a>
-  <a class="card" href="#repos"><b>On Radicle</b><span>The public repositories mirrored to the Radicle network. Public.</span></a>
+  <a class="card" href="#repos" data-radicle><b>On Radicle</b><span>The public repositories mirrored to the Radicle network. Public.</span></a>
 </div>
 
 <h2 id="how">How it works</h2>
@@ -102,7 +105,7 @@ mirrored to the Radicle peer-to-peer network.</p>
 </div>
 <p>Steps 2 and 3 are automatic and usually take a few minutes. The very first build on this server
 takes longer (about 5 to 10 minutes) while it downloads its build images.</p>
-<p>Alongside, every <b>public</b> repository is copied to <a class="radicle-link" href="#">Radicle</a>
+<p data-radicle>Alongside, every <b>public</b> repository is copied to <a class="radicle-link" href="#">Radicle</a>
 within seconds of each push: branches and tags, signed by this server's Radicle node. Gitea stays
 the one place to work. The Radicle copy is for distribution: anyone can <code>rad clone</code> it,
 and it stays available even when this server is not. Private repositories are never copied.</p>
@@ -131,7 +134,8 @@ git push -u origin main</code></pre>
     Applications</b>).</li>
   <li><b>Add a workflow</b> at <code>.gitea/workflows/build.yml</code>. This one builds the
     <code>Dockerfile</code> at the root for every <code>v*</code> tag. It is a GitHub-style
-    workflow with three differences: it logs in to <code>localhost:5000</code>, this forge's staging
+    workflow with four differences: it runs on <code>ipcr</code>, this forge's own runner (the
+    only one that reaches the staging registry), it logs in to <code>localhost:5000</code>, this forge's staging
     registry, as the repository itself (the forge sets the <code>IPCR_PUSH_TOKEN</code> secret on
     every public repository allowed to publish), the image goes there under the repository's own
     name, and buildx's builder runs with <code>network=host</code> so it can reach that registry.
@@ -141,7 +145,7 @@ on:
     tags: ['v*']
 jobs:
   image:
-    runs-on: ubuntu-latest
+    runs-on: ipcr
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
@@ -200,7 +204,10 @@ image's content address and can never change.</p>
 <p class="muted">New releases need no change to either record: they update the publisher name.</p>
 
 <h2 id="repos">On Radicle</h2>
-<p>Public repositories of this forge, as mirrored to the Radicle network by this server's node
+<p id="no-radicle" class="note" hidden>No Radicle node on this server, so nothing is mirrored yet.
+Install the <b>Radicle</b> app from the store: every public repository is then mirrored within one
+reconcile (ten minutes at most).</p>
+<p data-radicle>Public repositories of this forge, as mirrored to the Radicle network by this server's node
 (<code id="node-id">…</code>). Clone one with <code>rad clone &lt;id&gt;</code> from any Radicle node.</p>
 <div id="repos-body"><p class="muted">Loading…</p></div>
 <p class="muted">A repository that turns private or is deleted in Gitea is no longer synced
@@ -235,8 +242,8 @@ for IPFS peers. Details: <a href="https://github.com/Yundera/ipcr" target="_blan
   <tr><th>Address</th><th>What</th></tr>
   <tr><td><a id="t-gitea" href="#"></a></td><td>Gitea: repositories, Actions, users (<code>gitea_admin</code>)</td></tr>
   <tr><td><a id="t-forge" href="#"></a></td><td>This page (public)</td></tr>
-  <tr><td><a id="t-radicle" href="#"></a></td><td>Radicle explorer (public)</td></tr>
-  <tr><td><a id="t-radicle-api" href="#"></a></td><td>Radicle API and read-only git over HTTPS (public)</td></tr>
+  <tr data-radicle><td><a id="t-radicle" href="#"></a></td><td>Radicle explorer (public)</td></tr>
+  <tr data-radicle><td><a id="t-radicle-api" href="#"></a></td><td>Radicle API and read-only git over HTTPS (public)</td></tr>
   <tr><td><code>ipcr.localhost:4767</code></td><td>IPCR registry, for this server's Docker only</td></tr>
   <tr><td><a id="t-ipcr" href="#"></a></td><td>Public front door: <code>docker pull</code> this forge's images from anywhere (read-only)</td></tr>
   <tr><td>TCP 8776 · TCP/UDP 4768</td><td>Radicle peers · IPFS peers</td></tr>
@@ -362,6 +369,27 @@ for IPFS peers. Details: <a href="https://github.com/Yundera/ipcr" target="_blan
       imagesBody.innerHTML = "";
       imagesBody.appendChild(el("p", "Nothing published yet. Tag v1.0.0 on the example repository (above), or push a v* tag from a repository with a workflow; its image appears here a few minutes later.", "muted"));
     });
+
+  // What the forge relies on: Gitea (as the setup step last found it), and a Radicle node to mirror
+  // into. The split listing installs neither, so either may be missing.
+  fetch("status.json", { cache: "no-store" })
+    .then(function (r) { return r.json(); })
+    .then(function (st) {
+      if (!st.radicle) {
+        all("[data-radicle]", function (e) { e.hidden = true; });
+        document.getElementById("no-radicle").hidden = false;
+      }
+      var msg = {
+        "unreachable": "Gitea is not reachable. This forge needs the Gitea app on this server: install it, then restart IPCR Forge.",
+        "bad-credentials": "Gitea refused the forge's admin login (gitea_admin and the server's default password, unless changed in the app's settings). Set FORGE_GITEA_ADMIN and FORGE_GITEA_PASSWORD to a Gitea site admin, then restart IPCR Forge."
+      }[st.gitea];
+      if (msg) {
+        var b = document.getElementById("status-banner");
+        b.textContent = msg;
+        b.hidden = false;
+      }
+    })
+    .catch(function () {});
 
   // Radicle mirrors: the forge service's state.
   var reposBody = document.getElementById("repos-body");

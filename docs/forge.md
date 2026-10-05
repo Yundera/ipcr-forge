@@ -6,9 +6,11 @@ naming, the admin API). The engine knows nothing about Gitea, Radicle or this fo
 the engine's image (`ghcr.io/yundera/ipcr`) and the contract listed in its
 [design notes](https://github.com/Yundera/ipcr/blob/main/docs/design.md#contract-with-add-ons).
 
-How the forge (store listing: [Apps/IPCR-Forge](https://github.com/Yundera/ipcr/tree/main/Apps/IPCR-Forge), in the IPCR repository) goes from `git push` to `docker pull`, why it
-is shaped this way, and what was learned building it. The listing's own security argument is in
-[rationale.md](https://github.com/Yundera/ipcr/blob/main/Apps/IPCR-Forge/rationale.md).
+How the forge (store listings: [Apps/IPCR-Forge](https://github.com/Yundera/ipcr/tree/main/Apps/IPCR-Forge)
+and [Apps/IPCR-Forge-AIO](https://github.com/Yundera/ipcr/tree/main/Apps/IPCR-Forge-AIO), in the IPCR repository)
+goes from `git push` to `docker pull`, why it is shaped this way, and what was learned building it.
+The listings' own security argument is in
+[rationale.md](https://github.com/Yundera/ipcr/blob/main/Apps/IPCR-Forge-AIO/rationale.md).
 
 ## Goal
 
@@ -59,6 +61,42 @@ anyone: docker pull ipcr.localhost:4767/ipns/<forge k51… | example.eth>/<owner
 
 The two legs do not depend on each other: a repository can be built without being mirrored
 (private repositories), and mirrored without being built (no workflow).
+
+## Two listings: split and all in one
+
+The same image runs in both; only the compose differs.
+
+| | **IPCR-Forge** (split) | **IPCR-Forge-AIO** (all in one) |
+| --- | --- | --- |
+| Gitea | the store's **Gitea** app, required, reached at `gitea:3000` on `pcs` | bundled |
+| Radicle | the store's **Radicle** app, optional, its home mounted from `/DATA/AppData/radicle/home` | bundled |
+| Runner labels | `ipcr` only | `ipcr` and `ubuntu-latest`/`-24.04`/`-22.04` |
+| Runner registration token | the setup step, through Gitea's API (`RUNNER_DIR`) | an init step on Gitea's volume |
+| Beside the Gitea/Radicle apps | yes, that is the point | no: same container names, domains, ports |
+
+Neither sits beside the IPCR app (the engine is bundled in both: its configuration is the forge's).
+
+What the split one relies on, and how each part fails when missing:
+
+- **Gitea**: the forge service calls `http://gitea:3000` and Gitea calls the forge's webhook at
+  `http://ipcr-forge:8081`, which the Gitea listing allows (`webhook.ALLOWED_HOST_LIST:
+  external,ipcr-forge`). The setup step signs in once as `FORGE_GITEA_ADMIN` / `FORGE_GITEA_PASSWORD`
+  (default `gitea_admin` and the server's default password). Gitea mints tokens only for a password,
+  never for another token, so these are what to change if the password was changed. Setup leaves
+  `secrets/setup-status` (`ok`, `unreachable`, `bad-credentials`), and the page shows a banner
+  for the last two. Setup exits cleanly in either case, so the install never hangs on a missing Gitea.
+- **The runner**: the Gitea app has its own runner, `gitea-runner`, with the usual labels. Its jobs
+  run in its own daemon, where `localhost:5000` is nothing. So the forge's runner takes `ipcr` only,
+  and publishing workflows say `runs-on: ipcr` (the example does; it works in both listings).
+- **Radicle**: the forge service needs the node's home itself (its key, its storage, its control
+  socket), not an API: Radicle's HTTP API is read-only. A repository is mirrored only when
+  `keys/radicle` and `node/control.sock` are there; otherwise it shows *waiting* and the page hides
+  the Radicle parts. The reconcile loop looks again every pass, so installing Radicle later starts
+  the mirror. `RADICLE=off` turns it off for good. The split listing creates
+  `/DATA/AppData/radicle/home` itself, owned by `$PUID`: left to Docker it would be created as
+  root, and the Radicle app's `rad auth` (as `$PUID`) could not write its key there later.
+- **Versions**: the forge image carries the `rad` CLI at the version the Radicle listing pins
+  (`RADICLE_VERSION` in [forge/Dockerfile](../forge/Dockerfile)). Bump both together.
 
 ## The forge service
 
@@ -248,6 +286,8 @@ A repository opts in by committing a workflow under `.gitea/workflows/`. The tem
 - `images: localhost:5000/${{ github.repository }}`: the repository's own name at the staging
   registry, the only one its token may push. `docker/metadata-action` lowercases it.
 - `context: .` and `driver-opts: network=host`: see findings 2 and 3.
+- `runs-on: ipcr`: the forge's own runner, the only one whose jobs reach the staging registry (see
+  [Two listings](#two-listings-split-and-all-in-one)).
 - The image is published as `/ipns/<forge>/<owner>/<repo>:<tag>`.
 
 ## Findings
@@ -408,3 +448,5 @@ New in v3 (tested locally with Gitea 1.27.3 and rad 1.10.1, 2026-10-04):
 - **act_runner** is pinned at 0.6.1, proven with Gitea 1.27.3. Upstream has moved on.
 - **Radicle → Gitea:** patches opened on Radicle could become pull requests. Not built.
 - **Store install:** test through the store, not only as a hand install.
+- **Split listing:** the store has no dependencies between apps; removing the Gitea app leaves the
+  forge reporting `unreachable` on its page, nothing more.

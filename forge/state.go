@@ -15,7 +15,7 @@ import (
 const (
 	stSynced  = "synced"  // Radicle has what Gitea has
 	stError   = "error"   // the last sync failed; retried on the next event or reconcile
-	stWaiting = "waiting" // empty repository: nothing to publish yet
+	stWaiting = "waiting" // empty repository, or no Radicle node yet: nothing to publish to
 	stFrozen  = "frozen"  // no longer public in Gitea (or deleted): no further sync, nothing retracted
 )
 

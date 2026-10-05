@@ -22,7 +22,11 @@
 //	GITEA_PASSWORD   setup only: its password, used once to mint the token and the hook
 //	SECRETS_DIR      gitea-token and hook-secret (default /secrets)
 //	STATE_DIR        repos.json and the bare mirrors (default /forge)
-//	RAD_HOME         the node's Radicle home (default /radicle-home)
+//	RAD_HOME         the node's Radicle home (default /radicle-home). Optional: without a node
+//	                 there (no key, or no control socket) nothing is mirrored until one appears
+//	RADICLE          off: never mirror to Radicle (default auto)
+//	RUNNER_DIR       setup only: act_runner's data folder; when set and the runner is not
+//	                 registered, setup leaves a registration token there (the split listing)
 //	WEB_LISTEN       the page (default :8080)
 //	HOOK_LISTEN      the webhook, internal only (default :8081)
 //	HOOK_URL         setup only: how Gitea reaches HOOK_LISTEN (default http://ipcr-forge:8081/hooks/gitea)
@@ -111,10 +115,11 @@ func serve() error {
 	}
 	secrets := env("SECRETS_DIR", "/secrets")
 	m := &mirror{
-		gitea:   newGitea(env("GITEA_URL", "http://gitea:3000"), env("GITEA_OWNER", "gitea_admin"), secrets+"/gitea-token"),
-		state:   st,
-		repoDir: stateDir + "/repos",
-		radHome: env("RAD_HOME", "/radicle-home"),
+		gitea:      newGitea(env("GITEA_URL", "http://gitea:3000"), env("GITEA_OWNER", "gitea_admin"), secrets+"/gitea-token"),
+		state:      st,
+		repoDir:    stateDir + "/repos",
+		radHome:    env("RAD_HOME", "/radicle-home"),
+		radicleOff: env("RADICLE", "auto") == "off",
 	}
 	if err := os.MkdirAll(m.repoDir, 0o755); err != nil {
 		return err
@@ -129,7 +134,9 @@ func serve() error {
 		log.Fatal(http.ListenAndServe(env("HOOK_LISTEN", ":8081"), hmux))
 	}()
 
-	mux := webHandler(st, env("IPCR_PUBLISHED", "/srv/ipcr-state/published.json"))
+	mux := webHandler(st, env("IPCR_PUBLISHED", "/srv/ipcr-state/published.json"), func() siteStatus {
+		return siteStatus{Gitea: readSetupStatus(secrets), Radicle: m.radicleReady()}
+	})
 	if ipcr := os.Getenv("IPCR_ADMIN"); ipcr != "" {
 		au, err := newAuth(splitList(env("PUBLIC_HOSTS", "")), m.gitea.base, secrets, stateDir+"/session-key")
 		if err != nil {

@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -58,15 +59,27 @@ func ensureOrg(g *gitea, org string) error {
 //	                         the root organisation when there is one.
 //	an OAuth2 application    the admin pages' Gitea login (PUBLIC_HOSTS → its redirect URIs);
 //	                         SECRETS_DIR/oauth-client-id and oauth-client-secret.
+//	RUNNER_DIR/token         when RUNNER_DIR is set and the runner there is not registered yet: a
+//	                         global runner registration token (the split listing, which cannot run
+//	                         `gitea actions generate-runner-token` on Gitea's own volume).
+//	SECRETS_DIR/setup-status how the last run went with Gitea (ok, unreachable, bad-credentials),
+//	                         for the forge's page.
 //
 // The admin password is used here only and never stored. If it was changed since install, the
-// step leaves the existing token and hook alone instead of failing the start.
+// step leaves the existing token and hook alone instead of failing the start. When Gitea cannot be
+// used at all (not installed, or the password is wrong and there is no token yet), the step records
+// why and exits cleanly: the page says what to do, and the next start tries again.
 func setup() error {
 	secrets := env("SECRETS_DIR", "/secrets")
 	g := newGitea(env("GITEA_URL", "http://gitea:3000"), env("GITEA_OWNER", "gitea_admin"), filepath.Join(secrets, "gitea-token"))
 	g.password = os.Getenv("GITEA_PASSWORD")
 	if g.password == "" {
 		return errors.New("GITEA_PASSWORD is required")
+	}
+	status := func(s string) {
+		if err := writeSetupStatus(secrets, s); err != nil {
+			log.Printf("setup: status: %v", err)
+		}
 	}
 
 	// Gitea may still be migrating, and its admin account may not exist yet. Bounded: an install
@@ -79,12 +92,20 @@ func setup() error {
 		}
 		if code == http.StatusUnauthorized && g.hasToken() {
 			log.Printf("setup: the admin password no longer works; keeping the existing token and webhook")
+			status(setupOK)
 			return nil
 		}
 		time.Sleep(3 * time.Second)
 	}
 	if err != nil {
-		return fmt.Errorf("Gitea not ready after 240s: %w", err)
+		if code == http.StatusUnauthorized {
+			log.Printf("setup: Gitea refuses %s's password, and there is no token yet: set the forge's Gitea admin credentials (%v)", g.owner, err)
+			status(setupBadCredentials)
+		} else {
+			log.Printf("setup: Gitea not reachable at %s after 240s, is the Gitea app installed? (%v)", g.base, err)
+			status(setupUnreachable)
+		}
+		return nil
 	}
 
 	if !g.hasToken() {
@@ -153,12 +174,54 @@ func setup() error {
 		}
 	}
 
+	if dir := os.Getenv("RUNNER_DIR"); dir != "" {
+		if err := ensureRunnerToken(g, dir); err != nil {
+			return fmt.Errorf("runner registration token: %w", err)
+		}
+	}
+
 	if name := env("EXAMPLE_REPO", "ipcr-hello"); name != "-" && name != "" {
 		// Not fatal: the forge works without its example.
 		if err := ensureExample(g, owner, name); err != nil {
 			log.Printf("setup: example repository: %v", err)
 		}
 	}
+	status(setupOK)
+	return nil
+}
+
+// What the last setup run found, in SECRETS_DIR/setup-status (read by the page, see web.go).
+const (
+	setupOK             = "ok"
+	setupUnreachable    = "unreachable"
+	setupBadCredentials = "bad-credentials"
+)
+
+func writeSetupStatus(secrets, s string) error {
+	b, _ := json.Marshal(map[string]string{"gitea": s})
+	return writeSecret(filepath.Join(secrets, "setup-status"), string(b))
+}
+
+// ensureRunnerToken leaves a global runner registration token in dir/token for act_runner, unless
+// the runner there is already registered (dir/.runner). Gitea returns the same token until it is
+// used, so a repeated call before registration is harmless.
+func ensureRunnerToken(g *gitea, dir string) error {
+	if b, err := os.ReadFile(filepath.Join(dir, ".runner")); err == nil && len(b) > 0 {
+		return nil
+	}
+	var t struct {
+		Token string `json:"token"`
+	}
+	if _, err := g.call("POST", "/admin/actions/runners/registration-token", nil, &t); err != nil {
+		return err
+	}
+	if t.Token == "" {
+		return errors.New("Gitea returned no token")
+	}
+	if err := writeSecret(filepath.Join(dir, "token"), t.Token); err != nil {
+		return err
+	}
+	log.Printf("setup: runner registration token written")
 	return nil
 }
 

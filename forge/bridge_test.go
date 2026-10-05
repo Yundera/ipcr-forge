@@ -180,7 +180,9 @@ func TestExampleEmbedded(t *testing.T) {
 func TestWeb(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := loadState(filepath.Join(dir, "repos.json"))
-	h := webHandler(st, filepath.Join(dir, "published.json"))
+	h := webHandler(st, filepath.Join(dir, "published.json"), func() siteStatus {
+		return siteStatus{Gitea: readSetupStatus(dir), Radicle: false}
+	})
 	get := func(p string) (int, string) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", p, nil))
@@ -199,8 +201,99 @@ func TestWeb(t *testing.T) {
 	if c, b := get("/repos.json"); c != 200 || strings.TrimSpace(b) != "[]" {
 		t.Errorf("/repos.json: %d %q", c, b)
 	}
+	if c, b := get("/status.json"); c != 200 || strings.TrimSpace(b) != `{"gitea":"unknown","radicle":false}` {
+		t.Errorf("/status.json before setup: %d %q", c, b)
+	}
+	writeSetupStatus(dir, setupBadCredentials)
+	if _, b := get("/status.json"); strings.TrimSpace(b) != `{"gitea":"bad-credentials","radicle":false}` {
+		t.Errorf("/status.json after setup: %q", b)
+	}
 	if c, _ := get("/nothing"); c != 404 {
 		t.Errorf("/nothing: %d", c)
+	}
+}
+
+// fakeGitea answers the few API calls a test needs; anything else is a 404.
+func fakeGitea(t *testing.T, routes map[string]http.HandlerFunc) *httptest.Server {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h, ok := routes[r.Method+" "+r.URL.Path]; ok {
+			h(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// Without a Radicle node, a public repository waits (and nothing is fetched); with one, the mirror
+// would run (radicleReady is what gates it).
+func TestSyncWithoutRadicle(t *testing.T) {
+	dir := t.TempDir()
+	srv := fakeGitea(t, map[string]http.HandlerFunc{
+		"GET /api/v1/repositories/7": func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"id":7,"name":"app","full_name":"metadec/app","default_branch":"main"}`))
+		},
+	})
+	st, _ := loadState(filepath.Join(dir, "repos.json"))
+	rad := filepath.Join(dir, "radicle-home")
+	m := &mirror{gitea: newGitea(srv.URL, "gitea_admin", filepath.Join(dir, "token")), state: st,
+		repoDir: filepath.Join(dir, "repos"), radHome: rad}
+	m.sync(7)
+	got := st.get(7)
+	if got.State != stWaiting || got.Error != errNoRadicle || got.FullName != "metadec/app" {
+		t.Errorf("without Radicle: %+v", got)
+	}
+	if _, err := os.Stat(m.repoDir); err == nil {
+		t.Error("fetched a mirror with no Radicle node to push it to")
+	}
+
+	os.MkdirAll(filepath.Join(rad, "keys"), 0o755)
+	os.WriteFile(filepath.Join(rad, "keys", "radicle"), []byte("k"), 0o600)
+	if m.radicleReady() {
+		t.Error("ready with a key but no running node")
+	}
+	os.MkdirAll(filepath.Join(rad, "node"), 0o755)
+	os.WriteFile(filepath.Join(rad, "node", "control.sock"), nil, 0o600)
+	if !m.radicleReady() {
+		t.Error("not ready with a key and a control socket")
+	}
+	m.radicleOff = true
+	if m.radicleReady() {
+		t.Error("RADICLE=off ignored")
+	}
+}
+
+func TestRunnerToken(t *testing.T) {
+	dir := t.TempDir()
+	calls := 0
+	srv := fakeGitea(t, map[string]http.HandlerFunc{
+		"POST /api/v1/admin/actions/runners/registration-token": func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if u, p, ok := r.BasicAuth(); !ok || u != "gitea_admin" || p != "pw" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Write([]byte(`{"token":"reg-123"}`))
+		},
+	})
+	g := newGitea(srv.URL, "gitea_admin", filepath.Join(dir, "gitea-token"))
+	g.password = "pw"
+	if err := ensureRunnerToken(g, dir); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "token")); string(b) != "reg-123" {
+		t.Errorf("token file %q", b)
+	}
+	// Registered: left alone.
+	os.WriteFile(filepath.Join(dir, ".runner"), []byte(`{"id":1}`), 0o600)
+	if err := ensureRunnerToken(g, dir); err != nil || calls != 1 {
+		t.Errorf("registered runner: err %v, %d calls", err, calls)
+	}
+	g.password = "wrong"
+	os.Remove(filepath.Join(dir, ".runner"))
+	if err := ensureRunnerToken(g, dir); err == nil {
+		t.Error("refused token request not reported")
 	}
 }
 
