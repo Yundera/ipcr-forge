@@ -2,11 +2,12 @@ name: image
 
 # IPCR Forge's service image (forge/): Gitea → Radicle mirror, the forge's page and admin, the
 # staging gate. ghcr.io/yundera/ipcr-forge; a `vX.Y.Z` tag publishes X.Y.Z.
+# No `paths` filter on push: a tag push changes no files, so with one GitHub never starts the run
+# and the release image is never built (v0.4.0's first push).
 on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths: ["forge/**", ".github/workflows/image.yml"]
   pull_request:
     paths: ["forge/**", ".github/workflows/image.yml"]
   workflow_dispatch:
