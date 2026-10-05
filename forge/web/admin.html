@@ -332,7 +332,7 @@
       st8.textContent = "";
       publisher = s.key.id || "";
       $("key-name").textContent = s.key.name || "—";
-      $("key-id").textContent = publisher || "not created yet (the first import creates it)";
+      $("key-id").textContent = publisher || "not created yet (IPCR creates it when it starts: reload in a minute)";
       $("ens-value").textContent = "ipns://" + (publisher || "k51…");
       $("dns-value").textContent = "dnslink=/ipns/" + (publisher || "k51…");
       pubName = s.name && s.name.ok ? s.name.name : "";
