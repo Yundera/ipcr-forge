@@ -6,9 +6,9 @@ naming, the admin API). The engine knows nothing about Gitea, Radicle or this fo
 the engine's image (`ghcr.io/yundera/ipcr`) and the contract listed in its
 [design notes](https://github.com/Yundera/ipcr/blob/main/docs/design.md#contract-with-add-ons).
 
-How the forge in [Apps/IPCR-Forge/](../Apps/IPCR-Forge/) goes from `git push` to `docker pull`, why it
+How the forge (store listing: [Apps/IPCR-Forge](https://github.com/Yundera/ipcr/tree/main/Apps/IPCR-Forge), in the IPCR repository) goes from `git push` to `docker pull`, why it
 is shaped this way, and what was learned building it. The listing's own security argument is in
-[rationale.md](../Apps/IPCR-Forge/rationale.md).
+[rationale.md](https://github.com/Yundera/ipcr/blob/main/Apps/IPCR-Forge/rationale.md).
 
 ## Goal
 
