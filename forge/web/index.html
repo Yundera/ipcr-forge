@@ -91,6 +91,7 @@ mirrored to the Radicle peer-to-peer network.</p>
   <a class="card" id="link-gitea" href="#"><b>Gitea</b><span>Your repositories, pull requests, issues and builds. Sign in as <code>gitea_admin</code>.</span></a>
   <a class="card" href="#images"><b>Published images</b><span>What this forge serves from IPFS, with the line to put in a compose file.</span></a>
   <a class="card" href="#repos" data-radicle><b>On Radicle</b><span>The public repositories mirrored to the Radicle network. Public.</span></a>
+  <a class="card" href="admin"><b>Admin</b><span>Your ENS or DNS name, which repositories publish, unpublishing, the publisher key backup. Gitea site admins only.</span></a>
 </div>
 
 <h2 id="how">How it works</h2>
@@ -242,6 +243,7 @@ for IPFS peers. Details: <a href="https://github.com/Yundera/ipcr" target="_blan
   <tr><th>Address</th><th>What</th></tr>
   <tr><td><a id="t-gitea" href="#"></a></td><td>Gitea: repositories, Actions, users (<code>gitea_admin</code>)</td></tr>
   <tr><td><a id="t-forge" href="#"></a></td><td>This page (public)</td></tr>
+  <tr><td><a id="t-admin" href="admin"></a></td><td>Admin pages: signed in with Gitea, site administrators only</td></tr>
   <tr data-radicle><td><a id="t-radicle" href="#"></a></td><td>Radicle explorer (public)</td></tr>
   <tr data-radicle><td><a id="t-radicle-api" href="#"></a></td><td>Radicle API and read-only git over HTTPS (public)</td></tr>
   <tr><td><code>ipcr.localhost:4767</code></td><td>IPCR registry, for this server's Docker only</td></tr>
@@ -276,6 +278,7 @@ for IPFS peers. Details: <a href="https://github.com/Yundera/ipcr" target="_blan
   }
   setLink("t-gitea", "gitea", true);
   setLink("t-forge", "ipcr-forge", true);
+  document.getElementById("t-admin").textContent = (base ? "ipcr-forge-" + base : "ipcr-forge-<domain>") + "/admin";
   setLink("t-radicle", "radicle", true);
   setLink("t-radicle-api", "radicle-api", true);
   setLink("t-ipcr", "ipcr", true);
